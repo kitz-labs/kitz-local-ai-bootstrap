@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kitz-local-ai"
+version = "0.1.0"
+description = "KITZ Local AI bootstrap and control tooling"
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic>=2.10",
+  "fastapi>=0.115",
+  "httpx>=0.28",
+  "uvicorn>=0.30",
+  "pyyaml>=6.0",
+  "pydantic-ai>=1.0.0",
+  "pydantic-ai-harness>=0.1.0",
+  "sqlmodel>=0.0.24",
+  "qdrant-client>=1.12",
+  "docling>=2.70",
+  "mcp[cli]>=2.0,<3",
+  "playwright>=1.50",
+  "browser-use>=0.13.8,<0.14",
+  "psutil>=7.0",
+  "diffusers>=0.35,<0.40",
+  "torch>=2.7",
+  "safetensors>=0.5",
+  "transformers>=4.56",
+  "piper-tts>=1.3",
+  "apscheduler>=3.11,<4",
+  "python-telegram-bot>=22.0,<23",
+]
+
+[project.scripts]
+kitz-installer = "kitz_installer.main:cli"
+kitz-start = "kitz_cli.start:cli"
+kitz-stop = "kitz_cli.stop:cli"
+kitz-neustart = "kitz_cli.restart:cli"
+kitz-status = "kitz_cli.status:cli"
+kitz-agent-api = "kitz_core.api:cli"
+kitz-memory-list = "kitz_cli.memory:list_cli"
+kitz-memory-forget = "kitz_cli.memory:forget_cli"
+kitz-mcp-server = "kitz_tools.mcp_server:cli"
+kitz-media-smoke = "kitz_cli.media_smoke:cli"
+kitz-backup = "kitz_cli.backup:cli"
+kitz-restore = "kitz_cli.restore:cli"
+kitz-clean = "kitz_cli.clean:cli"
+kitz-update = "kitz_cli.update:cli"
+kitz-telegram-bot = "kitz_control.telegram_bot:cli"
+kitz-control-api = "kitz_control.api:cli"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kitz_installer", "src/kitz_cli", "src/kitz_core", "src/kitz_knowledge", "src/kitz_tools", "src/kitz_media", "src/kitz_ops", "src/kitz_control"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+addopts = ["--import-mode=importlib"]

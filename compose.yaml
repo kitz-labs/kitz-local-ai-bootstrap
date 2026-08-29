@@ -1,0 +1,21 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: kitz-qdrant
+    restart: unless-stopped
+    profiles: ["knowledge"]
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - "${HOME}/KITZLABS-AI/data/qdrant-active:/qdrant/storage"
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:2.5.3
+    container_name: kitz-uptime-kuma
+    restart: unless-stopped
+    profiles: ["monitoring"]
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - "${HOME}/KITZLABS-AI/data/uptime-kuma:/app/data"

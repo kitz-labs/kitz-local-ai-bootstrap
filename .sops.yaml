@@ -1,0 +1,5 @@
+# Runtime-safe baseline. The installer writes the machine-specific public age
+# recipient into ~/KITZLABS-AI/config/.sops.yaml; private identities stay in
+# macOS Keychain and are never written here.
+creation_rules:
+  - path_regex: '.*\.enc\.yaml$'

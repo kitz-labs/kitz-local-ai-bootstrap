@@ -1,0 +1,22 @@
+[Unit]
+Description=KITZ Local AI Telegram Control
+After=network-online.target kitz-control.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kitz-control
+Group=kitz-control
+WorkingDirectory=/opt/kitz-control/app
+EnvironmentFile=/etc/kitz-control/runtime.env
+ExecStart=/usr/local/libexec/kitz-telegram-start
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/kitz-control
+
+[Install]
+WantedBy=multi-user.target

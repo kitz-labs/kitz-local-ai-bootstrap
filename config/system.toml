@@ -1,0 +1,6 @@
+[media]
+mflux_model = "flux2-klein-4b"
+mflux_quantize = 8
+sdxl_model = "stabilityai/sdxl-turbo"
+whisper_model = "small"
+tts_engine = "piper"
