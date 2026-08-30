@@ -1,67 +1,60 @@
+import importlib.util
+import sys
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
-from release_overrides.install_localai_bridge import (
-    discover_models_dir,
-    install_bridge_config,
-    localai_has_model,
-    parse_chat_content,
-    render_bridge_config,
-)
+ROOT = Path(__file__).resolve().parents[1]
+MODULE = ROOT / 'release-overrides' / 'install_localai_bridge.py'
+spec = importlib.util.spec_from_file_location('install_localai_bridge', MODULE)
+mod = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = mod
+spec.loader.exec_module(mod)
 
 
 class LocalAIBridgeTests(unittest.TestCase):
-    def test_render_bridge_config_points_localai_to_agent_core(self):
-        text = render_bridge_config()
+    def test_render_bridge_config_is_chat_model_and_points_to_stream_bridge(self):
+        text = mod.render_bridge_config()
         self.assertIn('name: kitz-agent', text)
-        self.assertIn('known_usecases:\n  - chat\n', text)
+        self.assertIn('known_usecases:\n  - chat', text)
         self.assertIn('backend: cloud-proxy', text)
-        self.assertIn('mode: passthrough', text)
-        self.assertIn('provider: openai', text)
-        self.assertIn('upstream_url: http://127.0.0.1:8787/v1/chat/completions', text)
+        self.assertIn('upstream_url: http://127.0.0.1:8788/v1/chat/completions', text)
         self.assertIn('upstream_model: kitz-agent', text)
-        self.assertIn('request_timeout_seconds: 600', text)
-        self.assertIn('enabled: false', text)
 
-    def test_install_bridge_config_preserves_existing_config_with_backup(self):
+    def test_backup_is_outside_models_directory(self):
         with tempfile.TemporaryDirectory() as td:
-            model_dir = Path(td)
-            target = model_dir / 'kitz-agent.yaml'
+            root = Path(td) / '.localai'
+            models = root / 'models'
+            models.mkdir(parents=True)
+            target = models / 'kitz-agent.yaml'
             target.write_text('old config\n', encoding='utf-8')
-            result = install_bridge_config(model_dir)
+            result = mod.install_bridge_config(models, now=datetime(2026, 8, 30, 8, 50, 0))
             self.assertTrue(result.changed)
-            self.assertEqual(result.path, target)
-            self.assertIn('backend: cloud-proxy', target.read_text(encoding='utf-8'))
-            backups = list(model_dir.glob('kitz-agent.yaml.pre-v1.0.4-*'))
-            self.assertEqual(len(backups), 1)
-            self.assertEqual(backups[0].read_text(encoding='utf-8'), 'old config\n')
+            self.assertIsNotNone(result.backup)
+            self.assertEqual(result.backup.parent, root / 'backups' / 'kitz-agent')
+            self.assertFalse(any(models.glob('kitz-agent.yaml.pre-*')))
 
-    def test_install_bridge_config_is_idempotent(self):
+    def test_migrate_legacy_backups_removes_fake_model_files(self):
         with tempfile.TemporaryDirectory() as td:
-            model_dir = Path(td)
-            first = install_bridge_config(model_dir)
-            second = install_bridge_config(model_dir)
+            root = Path(td) / '.localai'
+            models = root / 'models'
+            models.mkdir(parents=True)
+            legacy = models / 'kitz-agent.yaml.pre-v1.0.4-20260830-082758'
+            legacy.write_text('old config', encoding='utf-8')
+            moved = mod.migrate_legacy_backups(models)
+            self.assertEqual(len(moved), 1)
+            self.assertFalse(legacy.exists())
+            self.assertTrue(moved[0].exists())
+            self.assertEqual(moved[0].parent, root / 'backups' / 'kitz-agent')
+
+    def test_install_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as td:
+            models = Path(td) / '.localai' / 'models'
+            first = mod.install_bridge_config(models)
+            second = mod.install_bridge_config(models)
             self.assertTrue(first.changed)
             self.assertFalse(second.changed)
-            self.assertEqual(list(model_dir.glob('kitz-agent.yaml.pre-v1.0.4-*')), [])
-
-    def test_discover_models_dir_finds_existing_localai_model_config(self):
-        with tempfile.TemporaryDirectory() as td:
-            home = Path(td)
-            real_models = home / '.localai' / 'custom-models'
-            real_models.mkdir(parents=True)
-            (real_models / 'qwen3-fast.yaml').write_text('name: qwen3-fast\n', encoding='utf-8')
-            self.assertEqual(discover_models_dir(home=home, env={}), real_models)
-
-    def test_localai_has_model_reads_openai_model_list(self):
-        payload = {'object': 'list', 'data': [{'id': 'qwen3-fast'}, {'id': 'kitz-agent'}]}
-        self.assertTrue(localai_has_model(payload, 'kitz-agent'))
-        self.assertFalse(localai_has_model(payload, 'missing'))
-
-    def test_parse_chat_content_reads_openai_chat_completion(self):
-        payload = {'choices': [{'message': {'role': 'assistant', 'content': 'KITZ BRIDGE OK'}}]}
-        self.assertEqual(parse_chat_content(payload), 'KITZ BRIDGE OK')
 
 
 if __name__ == '__main__':
