@@ -2,7 +2,7 @@
 set -euo pipefail
 
 printf '\n==============================================\n'
-printf ' KITZ Local AI v1.0.2 Bootstrap\n'
+printf ' KITZ Local AI v1.0.3 Bootstrap\n'
 printf '==============================================\n\n'
 
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -13,7 +13,7 @@ info() { printf '%s\n' "$*"; }
 command -v curl >/dev/null 2>&1 || fail 'curl is required but was not found.'
 
 repo_url="${KITZ_REPO_URL:-https://github.com/kitz-labs/kitz-local-ai-bootstrap.git}"
-repo_ref="${KITZ_REPO_REF:-v1.0.2}"
+repo_ref="${KITZ_REPO_REF:-v1.0.3}"
 raw_base="${KITZ_RAW_BASE:-https://raw.githubusercontent.com/kitz-labs/kitz-local-ai-bootstrap/${repo_ref}}"
 install_root="${KITZ_INSTALL_ROOT:-$HOME/KITZLABS-AI/agent-core}"
 tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/kitz-bootstrap.XXXXXX")"
@@ -123,6 +123,11 @@ for pkg in "${packages[@]}"; do
 done
 
 [[ -f "$install_root/src/kitz_installer/main.py" ]] || fail 'KITZ installer entrypoint is missing after extraction.'
+
+info '[bootstrap] Applying Ollama CLI start compatibility patch...'
+patcher="$tmpdir/patch_start_ollama.py"
+curl -fsSL "${raw_base}/release-overrides/patch_start_ollama.py" -o "$patcher" || fail 'Could not download Ollama start patch.'
+uv run --no-project --python 3.12 python "$patcher" "$install_root/src/kitz_cli/start.py" || fail 'Could not apply Ollama start patch.'
 
 cd "$install_root"
 info '[bootstrap] Installing KITZ command suite...'
