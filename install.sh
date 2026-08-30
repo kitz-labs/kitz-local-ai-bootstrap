@@ -2,7 +2,7 @@
 set -euo pipefail
 
 printf '\n==============================================\n'
-printf ' KITZ Local AI v1.0.1 Bootstrap\n'
+printf ' KITZ Local AI v1.0.2 Bootstrap\n'
 printf '==============================================\n\n'
 
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -13,7 +13,7 @@ info() { printf '%s\n' "$*"; }
 command -v curl >/dev/null 2>&1 || fail 'curl is required but was not found.'
 
 repo_url="${KITZ_REPO_URL:-https://github.com/kitz-labs/kitz-local-ai-bootstrap.git}"
-repo_ref="${KITZ_REPO_REF:-v1.0.1}"
+repo_ref="${KITZ_REPO_REF:-v1.0.2}"
 raw_base="${KITZ_RAW_BASE:-https://raw.githubusercontent.com/kitz-labs/kitz-local-ai-bootstrap/${repo_ref}}"
 install_root="${KITZ_INSTALL_ROOT:-$HOME/KITZLABS-AI/agent-core}"
 tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/kitz-bootstrap.XXXXXX")"
