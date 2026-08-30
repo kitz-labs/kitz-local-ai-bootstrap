@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,18 +22,19 @@ class NativeV110Tests(unittest.TestCase):
         text = mod.render_model_config()
         self.assertIn('backend: kitz-native', text)
         self.assertIn('parameters:\n  model: kitz-agent', text)
+        self.assertIn('known_usecases:\n  - chat', text)
         self.assertNotIn('cloud-proxy', text)
         self.assertNotIn('proxy:', text)
 
-    def test_localai_env_registers_external_grpc_backend(self):
+    def test_dynamic_external_backend_json_preserves_other_backends(self):
         mod = self.load_installer()
         with tempfile.TemporaryDirectory() as td:
-            env_path = Path(td) / 'localai.env'
-            env_path.write_text('LOCALAI_THREADS=4\n', encoding='utf-8')
-            mod.upsert_external_backend_env(env_path, Path('/tmp/kitz-native/run.sh'))
-            text = env_path.read_text(encoding='utf-8')
-            self.assertIn('LOCALAI_THREADS=4', text)
-            self.assertIn('LOCALAI_EXTERNAL_GRPC_BACKENDS=kitz-native:/tmp/kitz-native/run.sh', text)
+            path = Path(td) / 'external_backends.json'
+            path.write_text('{"other":"/tmp/other/run.sh"}\n', encoding='utf-8')
+            mod.upsert_external_backend_json(path, Path('/tmp/kitz-native/run.sh'))
+            data = json.loads(path.read_text(encoding='utf-8'))
+            self.assertEqual(data['other'], '/tmp/other/run.sh')
+            self.assertEqual(data['kitz-native'], '/tmp/kitz-native/run.sh')
 
     def test_backend_source_implements_grpc_chat_methods(self):
         text = BACKEND.read_text(encoding='utf-8')
@@ -42,12 +44,20 @@ class NativeV110Tests(unittest.TestCase):
         self.assertIn('def PredictStream(', text)
         self.assertIn('http://127.0.0.1:8787/v1/chat/completions', text)
 
-    def test_update_script_is_native_and_removes_legacy_bridge(self):
+    def test_predict_stream_uses_non_streaming_agent_core(self):
+        text = BACKEND.read_text(encoding='utf-8')
+        marker = 'def PredictStream(self, request, context):'
+        block = text[text.index(marker):]
+        self.assertIn('payload = _payload_from_request(request, stream=False)', block)
+        self.assertNotIn('payload = _payload_from_request(request, stream=True)', block)
+
+    def test_update_script_is_pinned_and_removes_legacy_bridge(self):
         text = UPDATE.read_text(encoding='utf-8')
         self.assertIn('v1.1.0 - KITZ Native Backend', text)
+        self.assertIn('KITZ_RELEASE_REF:-v1.1.0', text)
         self.assertIn('install_kitz_native.py', text)
-        self.assertNotIn('backend: cloud-proxy', text)
         self.assertIn('ai.kitz.localai-stream-bridge', text)
+        self.assertNotIn('/main/release-overrides/', text)
 
 
 if __name__ == '__main__':
