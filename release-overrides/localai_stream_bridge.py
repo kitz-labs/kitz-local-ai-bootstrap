@@ -13,6 +13,7 @@ DEFAULT_AGENT_CORE_URL = 'http://127.0.0.1:8787/v1/chat/completions'
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_PORT = 8788
 MODEL_NAME = 'kitz-agent'
+MAX_REQUEST_BODY_BYTES = 64 * 1024 * 1024
 
 
 def normalize_request_for_agent_core(payload: dict[str, Any]) -> dict[str, Any]:
@@ -98,6 +99,61 @@ def encode_sse_completion(completion: dict[str, Any], *, include_usage: bool = F
     return b''.join(frames)
 
 
+def _read_chunked_body(rfile: Any, *, max_bytes: int = MAX_REQUEST_BODY_BYTES) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        line = rfile.readline()
+        if not line:
+            raise ValueError('Unexpected EOF while reading chunk size')
+        token = line.strip().split(b';', 1)[0]
+        if not token:
+            raise ValueError('Empty chunk size')
+        try:
+            size = int(token, 16)
+        except ValueError as exc:
+            raise ValueError(f'Invalid chunk size: {token!r}') from exc
+        if size == 0:
+            while True:
+                trailer = rfile.readline()
+                if trailer in (b'\r\n', b'\n', b''):
+                    break
+            return b''.join(chunks)
+        total += size
+        if total > max_bytes:
+            raise ValueError('Request body too large')
+        data = rfile.read(size)
+        if len(data) != size:
+            raise ValueError('Unexpected EOF inside chunk body')
+        terminator = rfile.read(2)
+        if terminator != b'\r\n':
+            raise ValueError('Invalid chunk terminator')
+        chunks.append(data)
+
+
+def read_request_body(headers: Any, rfile: Any, *, max_bytes: int = MAX_REQUEST_BODY_BYTES) -> bytes:
+    transfer_encoding = headers.get('Transfer-Encoding', '') or ''
+    encodings = [part.strip().lower() for part in transfer_encoding.split(',')]
+    if 'chunked' in encodings:
+        return _read_chunked_body(rfile, max_bytes=max_bytes)
+
+    raw_length = headers.get('Content-Length')
+    if raw_length in (None, ''):
+        return b''
+    try:
+        length = int(raw_length)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f'Invalid Content-Length: {raw_length!r}') from exc
+    if length < 0:
+        raise ValueError('Negative Content-Length')
+    if length > max_bytes:
+        raise ValueError('Request body too large')
+    data = rfile.read(length)
+    if len(data) != length:
+        raise ValueError('Unexpected EOF while reading request body')
+    return data
+
+
 def call_agent_core(payload: dict[str, Any], *, url: str = DEFAULT_AGENT_CORE_URL, timeout: float = 600.0) -> tuple[int, bytes, str]:
     body = json.dumps(normalize_request_for_agent_core(payload), ensure_ascii=False).encode('utf-8')
     req = urllib.request.Request(
@@ -114,7 +170,7 @@ def call_agent_core(payload: dict[str, Any], *, url: str = DEFAULT_AGENT_CORE_UR
 
 
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = 'KITZLocalAIStreamBridge/1.0.6'
+    server_version = 'KITZLocalAIStreamBridge/1.0.8'
 
     def log_message(self, fmt: str, *args: Any) -> None:
         print('[stream-bridge] ' + (fmt % args), flush=True)
@@ -142,8 +198,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send_json(404, {'detail': 'Not found'})
             return
         try:
-            length = int(self.headers.get('Content-Length', '0'))
-            payload = json.loads(self.rfile.read(length).decode('utf-8'))
+            raw_body = read_request_body(self.headers, self.rfile)
+            if not raw_body:
+                raise ValueError('Empty request body')
+            payload = json.loads(raw_body.decode('utf-8'))
             if not isinstance(payload, dict):
                 raise ValueError('JSON body must be an object')
         except Exception as exc:
