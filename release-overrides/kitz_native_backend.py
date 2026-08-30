@@ -42,6 +42,9 @@ def _messages_from_request(request):
                 item['tool_calls'] = json.loads(raw_tool_calls)
             except json.JSONDecodeError:
                 pass
+        reasoning = getattr(msg, 'reasoning_content', '')
+        if reasoning:
+            item['reasoning_content'] = reasoning
         messages.append(item)
     if not messages:
         prompt = getattr(request, 'Prompt', '') or ''
@@ -96,8 +99,8 @@ def _json_request(url: str, payload=None, timeout: float = 600.0):
     return json.loads(raw)
 
 
-def _chat_content(payload):
-    return str(payload['choices'][0]['message'].get('content') or '')
+def _message(payload):
+    return payload['choices'][0].get('message') or {}
 
 
 def _usage(payload):
@@ -105,27 +108,38 @@ def _usage(payload):
     return int(usage.get('prompt_tokens') or 0), int(usage.get('completion_tokens') or 0)
 
 
-def _iter_sse(payload):
-    req = urllib.request.Request(
-        AGENT_CORE_CHAT_URL,
-        data=json.dumps(payload).encode('utf-8'),
-        headers={'Content-Type': 'application/json', 'Accept': 'text/event-stream'},
-        method='POST',
-    )
-    with urllib.request.urlopen(req, timeout=600.0) as resp:
-        for raw_line in resp:
-            line = raw_line.decode('utf-8', errors='replace').strip()
-            if not line.startswith('data:'):
-                continue
-            data = line[5:].strip()
-            if not data or data == '[DONE]':
-                if data == '[DONE]':
-                    break
-                continue
-            try:
-                yield json.loads(data)
-            except json.JSONDecodeError:
-                continue
+def _tool_call_deltas(message):
+    out = []
+    for index, item in enumerate(message.get('tool_calls') or []):
+        if not isinstance(item, dict):
+            continue
+        fn = item.get('function') or {}
+        arguments = fn.get('arguments') or ''
+        if not isinstance(arguments, str):
+            arguments = json.dumps(arguments, ensure_ascii=False)
+        out.append(
+            backend_pb2.ToolCallDelta(
+                index=index,
+                id=str(item.get('id') or ''),
+                name=str(fn.get('name') or ''),
+                arguments=arguments,
+            )
+        )
+    return out
+
+
+def _content_chunks(text: str, size: int = 48):
+    if not text:
+        return
+    pos = 0
+    while pos < len(text):
+        end = min(pos + size, len(text))
+        if end < len(text):
+            split = text.rfind(' ', pos, end)
+            if split > pos:
+                end = split + 1
+        yield text[pos:end]
+        pos = end
 
 
 class BackendServicer(backend_pb2_grpc.BackendServicer):
@@ -146,13 +160,21 @@ class BackendServicer(backend_pb2_grpc.BackendServicer):
         try:
             payload = _payload_from_request(request, stream=False)
             data = _json_request(AGENT_CORE_CHAT_URL, payload=payload)
-            content = _chat_content(data)
+            message = _message(data)
+            content = str(message.get('content') or '')
+            reasoning = str(message.get('reasoning_content') or '')
             prompt_tokens, completion_tokens = _usage(data)
             return backend_pb2.Reply(
                 message=content.encode('utf-8'),
                 prompt_tokens=prompt_tokens,
                 tokens=completion_tokens,
-                chat_deltas=[backend_pb2.ChatDelta(content=content)],
+                chat_deltas=[
+                    backend_pb2.ChatDelta(
+                        content=content,
+                        reasoning_content=reasoning,
+                        tool_calls=_tool_call_deltas(message),
+                    )
+                ],
             )
         except Exception as exc:
             context.set_code(grpc.StatusCode.INTERNAL)
@@ -161,25 +183,36 @@ class BackendServicer(backend_pb2_grpc.BackendServicer):
 
     def PredictStream(self, request, context):
         try:
-            payload = _payload_from_request(request, stream=True)
-            for event in _iter_sse(payload):
-                choices = event.get('choices') or []
-                if choices:
-                    delta = choices[0].get('delta') or {}
-                    content = delta.get('content') or ''
-                    reasoning = delta.get('reasoning_content') or ''
-                    if content or reasoning:
-                        yield backend_pb2.Reply(
-                            message=content.encode('utf-8'),
-                            chat_deltas=[backend_pb2.ChatDelta(content=content, reasoning_content=reasoning)],
-                        )
-                usage = event.get('usage') or {}
-                if usage:
-                    yield backend_pb2.Reply(
-                        message=b'',
-                        prompt_tokens=int(usage.get('prompt_tokens') or 0),
-                        tokens=int(usage.get('completion_tokens') or 0),
-                    )
+            # Agent Core v1 is non-streaming. LocalAI still calls PredictStream,
+            # so fetch one normal OpenAI response and emit it as gRPC deltas.
+            payload = _payload_from_request(request, stream=False)
+            data = _json_request(AGENT_CORE_CHAT_URL, payload=payload)
+            message = _message(data)
+            content = str(message.get('content') or '')
+            reasoning = str(message.get('reasoning_content') or '')
+            tool_calls = _tool_call_deltas(message)
+
+            if reasoning:
+                yield backend_pb2.Reply(
+                    message=b'',
+                    chat_deltas=[backend_pb2.ChatDelta(reasoning_content=reasoning)],
+                )
+            for chunk in _content_chunks(content):
+                yield backend_pb2.Reply(
+                    message=chunk.encode('utf-8'),
+                    chat_deltas=[backend_pb2.ChatDelta(content=chunk)],
+                )
+            if tool_calls:
+                yield backend_pb2.Reply(
+                    message=b'',
+                    chat_deltas=[backend_pb2.ChatDelta(tool_calls=tool_calls)],
+                )
+            prompt_tokens, completion_tokens = _usage(data)
+            yield backend_pb2.Reply(
+                message=b'',
+                prompt_tokens=prompt_tokens,
+                tokens=completion_tokens,
+            )
         except Exception as exc:
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(exc))
@@ -196,7 +229,9 @@ def serve(address: str):
         ],
     )
     backend_pb2_grpc.add_BackendServicer_to_server(BackendServicer(), server)
-    server.add_insecure_port(address)
+    bound = server.add_insecure_port(address)
+    if not bound:
+        raise RuntimeError(f'Could not bind KITZ native backend to {address}')
     server.start()
     print(f'KITZ native backend listening on {address}', file=sys.stderr, flush=True)
     server.wait_for_termination()
