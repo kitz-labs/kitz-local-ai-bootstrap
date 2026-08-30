@@ -2,7 +2,7 @@
 set -euo pipefail
 
 printf '\n==============================================\n'
-printf ' KITZ Local AI v1.0.3 Bootstrap\n'
+printf ' KITZ Local AI v1.1.1 Bootstrap\n'
 printf '==============================================\n\n'
 
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -13,7 +13,7 @@ info() { printf '%s\n' "$*"; }
 command -v curl >/dev/null 2>&1 || fail 'curl is required but was not found.'
 
 repo_url="${KITZ_REPO_URL:-https://github.com/kitz-labs/kitz-local-ai-bootstrap.git}"
-repo_ref="${KITZ_REPO_REF:-v1.0.3}"
+repo_ref="${KITZ_REPO_REF:-v1.1.1}"
 raw_base="${KITZ_RAW_BASE:-https://raw.githubusercontent.com/kitz-labs/kitz-local-ai-bootstrap/${repo_ref}}"
 install_root="${KITZ_INSTALL_ROOT:-$HOME/KITZLABS-AI/agent-core}"
 tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/kitz-bootstrap.XXXXXX")"
@@ -129,6 +129,12 @@ patcher="$tmpdir/patch_start_ollama.py"
 curl -fsSL "${raw_base}/release-overrides/patch_start_ollama.py" -o "$patcher" || fail 'Could not download Ollama start patch.'
 uv run --no-project --python 3.12 python "$patcher" "$install_root/src/kitz_cli/start.py" || fail 'Could not apply Ollama start patch.'
 
+info '[bootstrap] Applying Agent Core cold-start timeout patch...'
+timeout_patcher="$tmpdir/patch_agent_timeout.py"
+curl -fsSL "${raw_base}/release-overrides/patch_agent_timeout.py" -o "$timeout_patcher" || fail 'Could not download Agent Core timeout patch.'
+uv run --no-project --python 3.12 python "$timeout_patcher" "$install_root/src/kitz_core/localai.py" || fail 'Could not apply Agent Core timeout patch.'
+grep -q 'timeout: float = 240.0,' "$install_root/src/kitz_core/localai.py" || fail 'Agent Core timeout patch verification failed.'
+
 cd "$install_root"
 info '[bootstrap] Installing KITZ command suite...'
 uv tool install --force "$install_root"
@@ -145,5 +151,6 @@ uv run --no-dev kitz-installer install "$@"
 
 printf '\n==============================================\n'
 printf ' KITZ Local AI bootstrap completed\n'
+printf ' Agent Core timeout: 240 seconds\n'
 printf ' Run: kitz-status\n'
 printf '==============================================\n'
