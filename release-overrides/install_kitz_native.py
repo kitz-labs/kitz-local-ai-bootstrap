@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -28,23 +29,17 @@ def render_model_config() -> str:
     )
 
 
-def upsert_external_backend_env(env_path: Path, run_path: Path) -> None:
-    env_path = Path(env_path).expanduser()
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    line = f'LOCALAI_EXTERNAL_GRPC_BACKENDS={BACKEND_NAME}:{run_path}\n'
-    existing = env_path.read_text(encoding='utf-8').splitlines(keepends=True) if env_path.exists() else []
-    out = []
-    replaced = False
-    for old in existing:
-        if old.startswith('LOCALAI_EXTERNAL_GRPC_BACKENDS=') or old.startswith('EXTERNAL_GRPC_BACKENDS='):
-            if not replaced:
-                out.append(line)
-                replaced = True
-        else:
-            out.append(old)
-    if not replaced:
-        out.append(line)
-    env_path.write_text(''.join(out), encoding='utf-8')
+def upsert_external_backend_json(config_path: Path, run_path: Path) -> None:
+    config_path = Path(config_path).expanduser()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    data = {}
+    if config_path.exists() and config_path.stat().st_size:
+        loaded = json.loads(config_path.read_text(encoding='utf-8'))
+        if not isinstance(loaded, dict):
+            raise RuntimeError(f'{config_path} must contain a JSON object')
+        data.update({str(k): str(v) for k, v in loaded.items()})
+    data[BACKEND_NAME] = str(run_path)
+    write_atomic(config_path, json.dumps(data, indent=2, sort_keys=True) + '\n')
 
 
 def find_proto_source(backends_root: Path, target_dir: Path) -> Path:
@@ -94,7 +89,11 @@ def ensure_venv(backend_dir: Path) -> None:
         subprocess.run([uv, 'venv', '--python', '3.12', str(venv)], check=True)
     env = dict(os.environ)
     env['VIRTUAL_ENV'] = str(venv)
-    subprocess.run([uv, 'pip', 'install', 'grpcio>=1.66,<2', 'protobuf>=5,<7'], env=env, check=True)
+    subprocess.run(
+        [uv, 'pip', 'install', '--upgrade', 'grpcio>=1.66,<2', 'protobuf>=5,<7'],
+        env=env,
+        check=True,
+    )
 
 
 def install_backend(backend_source: Path, home: Path) -> Path:
@@ -130,16 +129,21 @@ def main(argv=None) -> int:
     home = args.home.expanduser()
     verify_agent_core()
     run_path = install_backend(args.backend_source, home)
-    models_dir = Path(os.environ.get('LOCALAI_MODELS_PATH', home / '.localai' / 'models')).expanduser()
+
+    localai_root = home / '.localai'
+    models_dir = Path(os.environ.get('LOCALAI_MODELS_PATH', localai_root / 'models')).expanduser()
     models_dir.mkdir(parents=True, exist_ok=True)
     model_path = models_dir / f'{MODEL_NAME}.yaml'
     backup = backup_model_config(model_path)
     write_atomic(model_path, render_model_config())
-    env_path = home / '.config' / 'localai.env'
-    upsert_external_backend_env(env_path, run_path)
+
+    config_dir = Path(os.environ.get('LOCALAI_CONFIG_DIR', localai_root / 'configuration')).expanduser()
+    external_backends = config_dir / 'external_backends.json'
+    upsert_external_backend_json(external_backends, run_path)
+
     print(f'[native] backend: {run_path}')
     print(f'[native] model config: {model_path}')
-    print(f'[native] LocalAI env: {env_path}')
+    print(f'[native] external backend config: {external_backends}')
     if backup:
         print(f'[native] backup: {backup}')
     return 0
