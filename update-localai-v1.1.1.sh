@@ -5,7 +5,7 @@ printf '\n==============================================\n'
 printf ' KITZ Local AI v1.1.1 - Agent Timeout Fix\n'
 printf '==============================================\n\n'
 
-for cmd in curl python3 lsof; do
+for cmd in curl python3 lsof open; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: $cmd missing" >&2; exit 1; }
 done
 
@@ -103,6 +103,27 @@ curl -fsS --max-time 3 http://127.0.0.1:8787/health >/dev/null || {
   exit 1
 }
 printf '[v1.1.1] Agent Core: ONLINE\n'
+
+if ! curl -fsS --max-time 3 http://127.0.0.1:8080/v1/models >/dev/null 2>&1; then
+  printf '[v1.1.1] LocalAI offline -> starting LocalAI...\n'
+  open -a LocalAI >/dev/null 2>&1 || true
+fi
+
+printf '[v1.1.1] Waiting for LocalAI :8080...\n'
+i=0
+while [ "$i" -lt 120 ]; do
+  if curl -fsS --max-time 3 http://127.0.0.1:8080/v1/models >/dev/null 2>&1; then
+    break
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+curl -fsS --max-time 5 http://127.0.0.1:8080/v1/models >/dev/null || {
+  rollback
+  echo 'ERROR: LocalAI did not come online; rollback completed.' >&2
+  exit 1
+}
+printf '[v1.1.1] LocalAI: ONLINE\n'
 
 code="$(curl -sS --max-time 240 -o "$CHAT_BODY" -w '%{http_code}' \
   http://127.0.0.1:8080/v1/chat/completions \
