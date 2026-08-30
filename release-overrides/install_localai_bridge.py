@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 MODEL_NAME = "kitz-agent"
-AGENT_CORE_CHAT_URL = "http://127.0.0.1:8787/v1/chat/completions"
+STREAM_BRIDGE_CHAT_URL = "http://127.0.0.1:8788/v1/chat/completions"
 AGENT_CORE_HEALTH_URL = "http://127.0.0.1:8787/health"
 LOCALAI_MODELS_URL = "http://127.0.0.1:8080/v1/models"
 LOCALAI_CHAT_URL = "http://127.0.0.1:8080/v1/chat/completions"
@@ -28,7 +28,7 @@ class InstallResult:
     backup: Path | None = None
 
 
-def render_bridge_config(*, model_name: str = MODEL_NAME, upstream_url: str = AGENT_CORE_CHAT_URL) -> str:
+def render_bridge_config(*, model_name: str = MODEL_NAME, upstream_url: str = STREAM_BRIDGE_CHAT_URL) -> str:
     return (
         f"name: {model_name}\n"
         "description: KITZ Agent Core - local orchestrator for models, knowledge and tools\n"
@@ -46,6 +46,25 @@ def render_bridge_config(*, model_name: str = MODEL_NAME, upstream_url: str = AG
     )
 
 
+def backup_dir_for(model_dir: Path) -> Path:
+    return Path(model_dir).expanduser().parent / "backups" / MODEL_NAME
+
+
+def migrate_legacy_backups(model_dir: Path) -> list[Path]:
+    model_dir = Path(model_dir).expanduser()
+    backup_dir = backup_dir_for(model_dir)
+    moved: list[Path] = []
+    for source in sorted(model_dir.glob(f"{MODEL_NAME}.yaml.pre-*")):
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        target = backup_dir / source.name
+        if target.exists():
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+            target = backup_dir / f"{source.name}.{stamp}"
+        shutil.move(str(source), str(target))
+        moved.append(target)
+    return moved
+
+
 def install_bridge_config(model_dir: Path, *, now: datetime | None = None) -> InstallResult:
     model_dir = Path(model_dir).expanduser()
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -55,8 +74,10 @@ def install_bridge_config(model_dir: Path, *, now: datetime | None = None) -> In
         return InstallResult(path=target, changed=False)
     backup: Path | None = None
     if target.exists():
+        backup_dir = backup_dir_for(model_dir)
+        backup_dir.mkdir(parents=True, exist_ok=True)
         stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
-        backup = model_dir / f"{target.name}.pre-v1.0.4-{stamp}"
+        backup = backup_dir / f"{target.name}.pre-v1.0.6-{stamp}"
         shutil.copy2(target, backup)
     fd, tmp_name = tempfile.mkstemp(prefix=".kitz-agent-", suffix=".yaml", dir=model_dir)
     try:
@@ -121,7 +142,7 @@ def _wait_json(url: str, *, timeout_seconds: int = 60) -> dict[str, Any]:
 def _restart_localai() -> None:
     subprocess.run(["osascript", "-e", 'tell application "LocalAI" to quit'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
     time.sleep(2)
-    subprocess.run(["pkill", "-f", "local-ai"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    subprocess.run(["pkill", "-x", "local-ai"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
     result = subprocess.run(["open", "-a", "LocalAI"], check=False)
     if result.returncode != 0:
         raise RuntimeError("Could not start LocalAI.app")
@@ -190,6 +211,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-restart", action="store_true")
     parser.add_argument("--no-chat-test", action="store_true")
     args = parser.parse_args(argv)
+    moved = migrate_legacy_backups(args.models_dir)
+    for path in moved:
+        print(f"[localai] moved legacy backup out of models: {path}")
     result = install_bridge_config(args.models_dir)
     print(f"[localai] bridge config: {result.path}")
     print(f"[localai] config {'updated' if result.changed else 'already current'}")
