@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import sys
 import unittest
 from pathlib import Path
@@ -48,6 +49,23 @@ class StreamBridgeTests(unittest.TestCase):
     def test_stream_error_body_is_not_faked_as_success(self):
         with self.assertRaises(ValueError):
             mod.encode_sse_completion({'detail': 'upstream failed'}, include_usage=False)
+
+    def test_chunked_request_body_is_decoded(self):
+        body = b'{"model":"kitz-agent","stream":true}'
+        wire = b'%X\r\n' % len(body) + body + b'\r\n0\r\n\r\n'
+        decoded = mod.read_request_body(
+            {'Transfer-Encoding': 'chunked'},
+            io.BytesIO(wire),
+        )
+        self.assertEqual(decoded, body)
+
+    def test_content_length_request_body_still_works(self):
+        body = b'{"model":"kitz-agent"}'
+        decoded = mod.read_request_body(
+            {'Content-Length': str(len(body))},
+            io.BytesIO(body),
+        )
+        self.assertEqual(decoded, body)
 
 
 if __name__ == '__main__':
