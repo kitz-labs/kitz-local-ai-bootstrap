@@ -32,6 +32,8 @@ def render_bridge_config(*, model_name: str = MODEL_NAME, upstream_url: str = AG
     return (
         f"name: {model_name}\n"
         "description: KITZ Agent Core - local orchestrator for models, knowledge and tools\n"
+        "known_usecases:\n"
+        "  - chat\n"
         "backend: cloud-proxy\n"
         "proxy:\n"
         "  mode: passthrough\n"
