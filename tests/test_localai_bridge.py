@@ -15,6 +15,7 @@ class LocalAIBridgeTests(unittest.TestCase):
     def test_render_bridge_config_points_localai_to_agent_core(self):
         text = render_bridge_config()
         self.assertIn('name: kitz-agent', text)
+        self.assertIn('known_usecases:\n  - chat\n', text)
         self.assertIn('backend: cloud-proxy', text)
         self.assertIn('mode: passthrough', text)
         self.assertIn('provider: openai', text)
