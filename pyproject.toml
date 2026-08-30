@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kitz-local-ai"
-version = "0.1.1"
+version = "0.1.2"
 description = "KITZ Local AI bootstrap and control tooling"
 requires-python = ">=3.12"
 dependencies = [
@@ -13,12 +13,12 @@ dependencies = [
   "httpx>=0.28",
   "uvicorn>=0.30",
   "pyyaml>=6.0",
-  "pydantic-ai>=1.0.0",
+  "pydantic-ai-slim[openai]>=2.33.0,<3",
   "pydantic-ai-harness>=0.1.0",
   "sqlmodel>=0.0.24",
   "qdrant-client>=1.12",
   "docling>=2.70",
-  "mcp[cli]>=2.0,<3",
+  "mcp[cli]>=1.24,<2",
   "playwright>=1.50",
   "psutil>=7.0",
   "diffusers>=0.35,<0.40",
